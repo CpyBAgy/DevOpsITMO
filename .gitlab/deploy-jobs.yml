@@ -1,0 +1,217 @@
+.deploy_template:
+  image: alpine:latest
+  variables:
+    DEPLOY_HOST: "localhost"
+    DEPLOY_USER: "deploy"
+    COMPOSE_FILE: "docker-compose.prod.yml"
+  before_script:
+    - apk add --no-cache openssh-client docker-cli docker-cli-compose
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+  script:
+    - |
+      echo "Deploying to $DEPLOY_HOST..."
+
+      ssh $DEPLOY_USER@$DEPLOY_HOST << 'ENDSSH'
+        set -e
+
+        cd ~/app || mkdir -p ~/app && cd ~/app
+
+        if [ -f docker-compose.prod.yml ]; then
+          echo "Stopping existing containers..."
+          docker-compose -f docker-compose.prod.yml down || true
+        fi
+
+        echo "Deployment completed"
+      ENDSSH
+
+.deploy_with_compose_template:
+  extends: .deploy_template
+  script:
+    - |
+      CI_REGISTRY_IMAGE_LOWER=$(echo "$CI_REGISTRY_IMAGE" | tr '[:upper:]' '[:lower:]')
+
+      echo "Creating docker-compose.prod.yml..."
+      cat > docker-compose.prod.yml << EOF
+      version: '3.8'
+
+      services:
+        db:
+          image: mysql:8.0
+          environment:
+            MYSQL_ROOT_PASSWORD: \${MYSQL_ROOT_PASSWORD}
+            MYSQL_DATABASE: \${MYSQL_DATABASE}
+            MYSQL_USER: \${MYSQL_USER}
+            MYSQL_PASSWORD: \${MYSQL_PASSWORD}
+          volumes:
+            - db_data:/var/lib/mysql
+          networks:
+            - app-network
+          restart: unless-stopped
+          healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p\${MYSQL_ROOT_PASSWORD}"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+        backend:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/backend:${CI_COMMIT_SHORT_SHA}
+          environment:
+            MYSQL_DATABASE: \${MYSQL_DATABASE}
+            MYSQL_USER: \${MYSQL_USER}
+            MYSQL_PASSWORD: \${MYSQL_PASSWORD}
+            MYSQL_PORT: 3306
+            DB_HOST: db
+          depends_on:
+            db:
+              condition: service_healthy
+          networks:
+            - app-network
+          restart: unless-stopped
+
+        frontend:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/frontend:${CI_COMMIT_SHORT_SHA}
+          environment:
+            REACT_APP_API_BASE_URL: http://localhost:3000/api
+          depends_on:
+            - backend
+          networks:
+            - app-network
+          restart: unless-stopped
+
+        nginx-proxy:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/nginx-proxy:${CI_COMMIT_SHORT_SHA}
+          ports:
+            - "3000:3000"
+          depends_on:
+            - frontend
+            - backend
+          networks:
+            - app-network
+          restart: unless-stopped
+
+      networks:
+        app-network:
+          driver: bridge
+
+      volumes:
+        db_data:
+      EOF
+
+      echo "Deploying to $DEPLOY_HOST..."
+
+      scp docker-compose.prod.yml $DEPLOY_USER@$DEPLOY_HOST:~/app/
+      scp .env $DEPLOY_USER@$DEPLOY_HOST:~/app/ || echo ".env not found, using existing on server"
+
+      ssh $DEPLOY_USER@$DEPLOY_HOST << 'ENDSSH'
+        set -e
+
+        cd ~/app
+
+        echo "Logging into GitLab Container Registry..."
+        echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+
+        if docker-compose -f docker-compose.prod.yml ps | grep -q "Up"; then
+          echo "Stopping existing containers..."
+          docker-compose -f docker-compose.prod.yml down
+        fi
+
+        echo "Pulling latest images..."
+        docker-compose -f docker-compose.prod.yml pull
+
+        echo "Starting containers..."
+        docker-compose -f docker-compose.prod.yml up -d
+
+        echo "Checking container status..."
+        docker-compose -f docker-compose.prod.yml ps
+
+        docker logout $CI_REGISTRY
+
+        echo "Deployment completed successfully!"
+      ENDSSH
+
+.deploy_local_template:
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - apk add --no-cache docker-cli-compose
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+  script:
+    - |
+      CI_REGISTRY_IMAGE_LOWER=$(echo "$CI_REGISTRY_IMAGE" | tr '[:upper:]' '[:lower:]')
+
+      cat > docker-compose.prod.yml << EOF
+      version: '3.8'
+
+      services:
+        db:
+          image: mysql:8.0
+          environment:
+            MYSQL_ROOT_PASSWORD: rootpass
+            MYSQL_DATABASE: appdb
+            MYSQL_USER: appuser
+            MYSQL_PASSWORD: apppass
+          networks:
+            - app-network
+          healthcheck:
+            test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+        backend:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/backend:${CI_COMMIT_SHORT_SHA}
+          environment:
+            MYSQL_DATABASE: appdb
+            MYSQL_USER: appuser
+            MYSQL_PASSWORD: apppass
+            DB_HOST: db
+          depends_on:
+            db:
+              condition: service_healthy
+          networks:
+            - app-network
+
+        frontend:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/frontend:${CI_COMMIT_SHORT_SHA}
+          depends_on:
+            - backend
+          networks:
+            - app-network
+
+        nginx-proxy:
+          image: ${CI_REGISTRY_IMAGE_LOWER}/nginx-proxy:${CI_COMMIT_SHORT_SHA}
+          ports:
+            - "3000:3000"
+          depends_on:
+            - frontend
+            - backend
+          networks:
+            - app-network
+
+      networks:
+        app-network:
+      EOF
+
+      if docker-compose -f docker-compose.prod.yml ps 2>/dev/null | grep -q "Up"; then
+        echo "Stopping existing containers..."
+        docker-compose -f docker-compose.prod.yml down
+      fi
+
+      echo "Pulling images..."
+      docker-compose -f docker-compose.prod.yml pull
+
+      echo "Starting containers..."
+      docker-compose -f docker-compose.prod.yml up -d
+
+      echo "Container status:"
+      docker-compose -f docker-compose.prod.yml ps
+  after_script:
+    - docker logout $CI_REGISTRY
