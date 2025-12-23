@@ -1,9 +1,11 @@
 include:
   - local: '.gitlab/docker-jobs.yml'
+  - local: '.gitlab/deploy-jobs.yml'
 
 stages:
   - build
   - scan
+  - deploy
   - cleanup
 
 variables:
@@ -107,6 +109,31 @@ scan:nginx:
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
         - nginx/**/*
+
+deploy:production:
+  extends: .deploy_local_template
+  stage: deploy
+  needs:
+    - job: build:backend
+      optional: true
+    - job: scan:backend
+      optional: true
+    - job: build:frontend
+      optional: true
+    - job: scan:frontend
+      optional: true
+    - job: build:nginx
+      optional: true
+    - job: scan:nginx
+      optional: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+  environment:
+    name: production
+    url: http://localhost:3000
 
 cleanup:docker:
   extends: .docker_cleanup_template

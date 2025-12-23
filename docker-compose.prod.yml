@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  db:
+    image: mysql:8.0
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: registry.gitlab.com/${CI_PROJECT_PATH}/backend:latest
+    env_file:
+      - .env
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_PORT: 3306
+      DB_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  frontend:
+    image: registry.gitlab.com/${CI_PROJECT_PATH}/frontend:latest
+    env_file:
+      - .env
+    environment:
+      REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL}
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  nginx-proxy:
+    image: registry.gitlab.com/${CI_PROJECT_PATH}/nginx-proxy:latest
+    ports:
+      - "${NGINX_PORT:-3000}:3000"
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  db_data:
