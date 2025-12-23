@@ -11,9 +11,12 @@
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
     - |
-      IMAGE_TAG="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
-      IMAGE_TAG_LATEST="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:latest"
-      IMAGE_TAG_BRANCH="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:${CI_COMMIT_REF_SLUG}"
+      # Преобразуем в lowercase для Docker
+      CI_REGISTRY_IMAGE_LOWER=$(echo "$CI_REGISTRY_IMAGE" | tr '[:upper:]' '[:lower:]')
+      
+      IMAGE_TAG="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      IMAGE_TAG_LATEST="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:latest"
+      IMAGE_TAG_BRANCH="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:${CI_COMMIT_REF_SLUG}"
 
       docker build \
         --cache-from ${IMAGE_TAG_LATEST} \
@@ -34,14 +37,17 @@
   extends: .docker_build_template
   script:
     - |
-      IMAGE_TAG="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
-      IMAGE_TAG_LATEST="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:latest"
-      IMAGE_TAG_BRANCH="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:${CI_COMMIT_REF_SLUG}"
+      # Преобразуем в lowercase для Docker
+      CI_REGISTRY_IMAGE_LOWER=$(echo "$CI_REGISTRY_IMAGE" | tr '[:upper:]' '[:lower:]')
+      
+      IMAGE_TAG="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      IMAGE_TAG_LATEST="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:latest"
+      IMAGE_TAG_BRANCH="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:${CI_COMMIT_REF_SLUG}"
 
       CACHE_ARGS=""
       if [ -n "$BUILD_STAGES" ]; then
         for stage in $BUILD_STAGES; do
-          STAGE_IMAGE="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}-${stage}:cache"
+          STAGE_IMAGE="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}-${stage}:cache"
           CACHE_ARGS="${CACHE_ARGS} --cache-from ${STAGE_IMAGE}"
           docker pull ${STAGE_IMAGE} || true
         done
@@ -61,7 +67,7 @@
 
       if [ -n "$BUILD_STAGES" ]; then
         for stage in $BUILD_STAGES; do
-          STAGE_IMAGE="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}-${stage}:cache"
+          STAGE_IMAGE="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}-${stage}:cache"
           docker build \
             --target ${stage} \
             --cache-from ${STAGE_IMAGE} \
@@ -86,7 +92,10 @@
     DOCKER_TLS_CERTDIR: "/certs"
   script:
     - |
-      IMAGE_TAG="${CI_REGISTRY_IMAGE}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      # Преобразуем в lowercase для Docker
+      CI_REGISTRY_IMAGE_LOWER=$(echo "$CI_REGISTRY_IMAGE" | tr '[:upper:]' '[:lower:]')
+      
+      IMAGE_TAG="${CI_REGISTRY_IMAGE_LOWER}/${SERVICE_NAME}:${CI_COMMIT_SHORT_SHA}"
 
       apk add --no-cache curl
       curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
