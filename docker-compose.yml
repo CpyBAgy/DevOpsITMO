@@ -56,8 +56,6 @@ services:
     networks:
       - app-network
     restart: unless-stopped
-    volumes:
-      - ./frontend/config:/etc/nginx/conf.d
 
   nginx-proxy:
     build:

@@ -1,0 +1,115 @@
+include:
+  - local: '.gitlab/docker-jobs.yml'
+
+stages:
+  - build
+  - scan
+  - cleanup
+
+variables:
+  CI_REGISTRY: registry.gitlab.com
+  CI_REGISTRY_IMAGE: $CI_REGISTRY/$CI_PROJECT_PATH
+
+build:backend:
+  extends: .docker_build_with_cache_template
+  stage: build
+  variables:
+    SERVICE_NAME: backend
+    DOCKERFILE_PATH: backend/Dockerfile
+    BUILD_CONTEXT: backend
+    BUILD_STAGES: "build"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - backend/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+
+scan:backend:
+  extends: .docker_scan_template
+  stage: scan
+  variables:
+    SERVICE_NAME: backend
+  needs:
+    - build:backend
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - backend/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - backend/**/*
+
+build:frontend:
+  extends: .docker_build_with_cache_template
+  stage: build
+  variables:
+    SERVICE_NAME: frontend
+    DOCKERFILE_PATH: frontend/Dockerfile
+    BUILD_CONTEXT: frontend
+    BUILD_STAGES: "build"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - frontend/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - frontend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+
+scan:frontend:
+  extends: .docker_scan_template
+  stage: scan
+  variables:
+    SERVICE_NAME: frontend
+  needs:
+    - build:frontend
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - frontend/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - frontend/**/*
+
+build:nginx:
+  extends: .docker_build_template
+  stage: build
+  variables:
+    SERVICE_NAME: nginx-proxy
+    DOCKERFILE_PATH: nginx/Dockerfile
+    BUILD_CONTEXT: nginx
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - nginx/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - nginx/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+
+scan:nginx:
+  extends: .docker_scan_template
+  stage: scan
+  variables:
+    SERVICE_NAME: nginx-proxy
+  needs:
+    - build:nginx
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - nginx/**/*
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        - nginx/**/*
+
+cleanup:docker:
+  extends: .docker_cleanup_template
+  stage: cleanup
+  rules:
+    - when: manual
